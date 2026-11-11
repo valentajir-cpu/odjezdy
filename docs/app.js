@@ -183,8 +183,9 @@ var Core = (function () {
         var pos = nowMin - v.delay;          // kde by vuz mel byt podle radu
         for (var k = 0; k < nodes.length; k++) {
           if (D.stops[nodes[k]][0] !== v.last) continue;
-          var lo = c.t0 + dep[k] - 1.5;
-          var hi = c.t0 + (k + 1 < nodes.length ? arr[k + 1] : dep[k]) + 1.5;
+          // tolerance: zpozdeni je v celych minutach a vuz s predstihem hlasi 0
+          var lo = c.t0 + dep[k] - 2.5;
+          var hi = c.t0 + (k + 1 < nodes.length ? arr[k + 1] : dep[k]) + 3.5;
           var score;
           if (pos >= lo && pos <= hi) {
             score = Math.abs(pos - (lo + hi) / 2);
