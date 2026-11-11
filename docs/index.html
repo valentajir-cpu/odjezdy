@@ -23,6 +23,7 @@
   }
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { margin: 0; }
 body {
   background: var(--bg); color: var(--ink);
@@ -84,7 +85,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 .mid { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
 .head { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.meta { color: var(--muted); font-size: 13px; }
+.meta { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .right { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; text-align: right; }
 .in { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.15; }
 .time { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
@@ -97,6 +98,9 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .dot.plan { background: transparent; border: 1.5px solid var(--muted); }
 
 /* ===== 4. STAV A PATICKA ===== */
+#near { margin: 10px 4px 0; color: var(--muted); font-size: 13px; }
+.sug.street { color: var(--accent); }
+.meta b { color: var(--ink); font-weight: 600; }
 #info { margin: 18px 4px; color: var(--muted); text-align: center; }
 #status { margin: 14px 4px 0; color: var(--muted); font-size: 13px; }
 #stale { margin: 8px 4px 0; color: var(--late); font-size: 13px; }
@@ -108,29 +112,31 @@ footer a { color: inherit; }
 <main>
   <section class="form" aria-label="Trasa">
     <div class="field">
-      <label for="inFrom">Odkud</label>
-      <input id="inFrom" type="text" inputmode="search" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Výchozí zastávka">
+      <label for="inFrom">Odkud (zastávka nebo ulice)</label>
+      <input id="inFrom" type="text" inputmode="search" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Zastávka nebo ulice" enterkeyhint="search">
       <div id="sugFrom" class="sugs" hidden></div>
     </div>
     <button id="btnSwap" type="button" aria-label="Prohodit směr" title="Prohodit směr">⇅</button>
     <div class="field">
-      <label for="inTo">Kam (jen přímé spoje)</label>
-      <input id="inTo" type="text" inputmode="search" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Cílová zastávka">
+      <label for="inTo">Kam (nepovinné, jen přímé spoje)</label>
+      <input id="inTo" type="text" inputmode="search" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Prázdné = všechny směry">
       <div id="sugTo" class="sugs" hidden></div>
     </div>
     <div class="opts">
-      <div class="walk">
+      <div class="walk" id="walkBox">
         <span>Na zastávku dojdu za</span>
         <button id="walkMinus" type="button" aria-label="Méně minut">−</button>
         <b><span id="walkVal">5</span> min</b>
         <button id="walkPlus" type="button" aria-label="Více minut">+</button>
       </div>
+      <div class="walk" id="walkAuto" hidden>Čas chůze počítám podle vzdálenosti zastávky.</div>
       <button id="btnFav" type="button" disabled>☆ Uložit trasu</button>
     </div>
   </section>
 
   <div id="favs" class="favs" hidden></div>
 
+  <p id="near" hidden></p>
   <p id="info"></p>
   <ul id="list" aria-live="polite"></ul>
 
@@ -140,6 +146,7 @@ footer a { color: inherit; }
   <footer>
     Plný kroužek = živý čas dopočítaný ze zpoždění vozu, prázdný = čas podle jízdního řádu.
     Data: KORDIS JMK, a.s. a statutární město Brno (<a href="https://data.brno.cz" rel="noopener">data.brno.cz</a>), licence CC BY 4.0.
+    Hledání adres: © přispěvatelé <a href="https://www.openstreetmap.org/copyright" rel="noopener">OpenStreetMap</a> (Nominatim).
     Živé časy jsou odhad, nejde o oficiální údaj IDS JMK.
   </footer>
 </main>

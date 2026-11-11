@@ -1,5 +1,5 @@
 /* Odjezdy MHD - IDS JMK
- * Prime spoje Odkud -> Kam, zive zpozdeni z proudu vozidel KORDIS (gis.brno.cz),
+ * Odjezdy ze zastavky nebo z okoli ulice, volitelne jen prime spoje do cile, zive zpozdeni z proudu vozidel KORDIS (gis.brno.cz),
  * jizdni rad z data.json (generuje scripts/build_data.py).
  */
 "use strict";
@@ -11,10 +11,18 @@ var CFG = {
   DATA_URL: "data.json",
   WS_URL: "wss://gis.brno.cz/geoevent/ws/services/Kordis_stream/StreamServer/subscribe",
   HORIZON_MIN: 180,        // jak daleko dopredu hledat odjezdy
-  MAX_ROWS: 12,            // kolik odjezdu zobrazit
+  MAX_ROWS: 14,            // kolik odjezdu zobrazit
   KEEP_UNMATCHED_MIN: 2,   // jak dlouho po case odjezdu drzet spoj bez zivych dat
   VEHICLE_TTL_MS: 120000,  // po jake dobe bez zpravy vuz zahodit
   RENDER_MS: 5000,
+  GEOCODE_URL: "https://nominatim.openstreetmap.org/search",
+  GEOCODE_BOX: "15.5,49.65,17.7,48.6",   // Jihomoravsky kraj (zap., sev., vych., jih)
+  NEAR_RADIUS_M: 500,      // okoli adresy, ve kterem se hledaji zastavky
+  NEAR_FALLBACK_M: 1500,   // kdyz v okoli nic neni, vezmou se nejblizsi do teto vzdalenosti
+  NEAR_MAX_STOPS: 8,
+  WALK_M_PER_MIN: 75,      // rychlost chuze
+  WALK_DETOUR: 1.3,        // prirazka na to, ze se nejde vzdusnou carou
+  HORIZON_NODEST_MIN: 90,  // bez cile staci kratsi vyhled
   STORE_KEY: "odjezdy.v1"
 };
 
@@ -106,19 +114,30 @@ var Core = (function () {
   }
 
   // ---- 2.5 Kandidati odjezdu podle jizdniho radu ----
+  // toIdx < 0 = bez cile (vsechny odjezdy ze zastavky)
   // vraci spoje s casem v minutach od dnesni pulnoci (Praha)
   function candidates(fromIdx, toIdx, now) {
     var out = [], seen = {};
     var todayIdx = dayDiff(now.ymd, D.base);
-    byNode[toIdx].forEach(function (e) {
-      var pi = e[0], j = e[1], p = D.pat[pi], nodes = p[2], fl = p[6];
-      if (fl && (fl[j] & 2)) return;
-      // nejblizsi predchozi vyskyt vychozi zastavky
-      var i = -1;
-      for (var k = j - 1; k >= 0; k--) {
-        if (nodes[k] === fromIdx && !(fl && (fl[k] & 1))) { i = k; break; }
-      }
-      if (i < 0) return;
+    var horizon = toIdx >= 0 ? CFG.HORIZON_MIN : CFG.HORIZON_NODEST_MIN;
+    var pairs = [];           // [vzor, pozice nastupu, pozice vystupu]
+    if (toIdx >= 0) {
+      byNode[toIdx].forEach(function (e) {
+        var p = D.pat[e[0]], nodes = p[2], fl = p[6], j = e[1];
+        if (fl && (fl[j] & 2)) return;
+        for (var k = j - 1; k >= 0; k--) {
+          if (nodes[k] === fromIdx && !(fl && (fl[k] & 1))) { pairs.push([e[0], k, j]); break; }
+        }
+      });
+    } else {
+      byNode[fromIdx].forEach(function (e) {
+        var p = D.pat[e[0]], fl = p[6], last = p[2].length - 1;
+        if (e[1] >= last || (fl && (fl[e[1]] & 1))) return;
+        pairs.push([e[0], e[1], last]);
+      });
+    }
+    pairs.forEach(function (pr) {
+      var pi = pr[0], i = pr[1], j = pr[2], p = D.pat[pi], fl = p[6];
       var dep = p[4], arr = p[5] || p[4], tr = p[7];
       for (var off = -1; off <= 1; off++) {
         var di = todayIdx + off;
@@ -128,12 +147,12 @@ var Core = (function () {
           if (mask.charAt(di) !== "1") continue;
           var t0 = off * 1440 + tr[t];
           var sched = t0 + dep[i];
-          if (sched < now.min - 45 || sched > now.min + CFG.HORIZON_MIN) continue;
+          if (sched < now.min - 45 || sched > now.min + horizon) continue;
           var key = pi + ":" + t0 + ":" + i;
           if (seen[key]) continue;
           seen[key] = 1;
           out.push({
-            pat: pi, t0: t0, i: i, j: j,
+            pat: pi, t0: t0, i: i, j: j, trip: pi + ":" + t0,
             sched: sched, schedArr: t0 + arr[j],
             route: p[0], headsign: p[1], post: p[3][i],
             request: !!(fl && (fl[i] & 4))
@@ -189,33 +208,73 @@ var Core = (function () {
   }
 
   // ---- 2.7 Vysledny seznam odjezdu ----
-  function departures(fromIdx, toIdx, dateObj, vehicles, walkMin) {
+  // origins: pole {idx, walk} (jedna zastavka, nebo vice zastavek v okoli adresy)
+  // toIdx: cilova zastavka, nebo -1
+  function departures(origins, toIdx, dateObj, vehicles) {
     var now = pragueNow(dateObj);
-    var cands = candidates(fromIdx, toIdx, now);
-    if (vehicles && vehicles.length) matchVehicles(cands, vehicles, now.min);
-    var rows = [];
-    cands.forEach(function (c) {
-      var live = !!c.veh, delay = live ? c.veh.delay : 0;
-      if (live && c.vehPos > c.i) return;                      // vuz uz zastavku projel
-      if (!live && c.sched < now.min - CFG.KEEP_UNMATCHED_MIN) return;
-      var dep = c.sched + delay;
-      var atStop = live && c.vehPos === c.i;
-      if (atStop && dep < now.min) dep = now.min;
-      if (live && !atStop && dep < now.min - 1) dep = now.min; // zpozdeni mezitim naroslo
-      var r = D.routes[c.route];
-      var platMap = D.plat[fromIdx];
-      rows.push({
-        line: r[0], type: r[1], color: r[2], textColor: r[3],
-        headsign: c.headsign,
-        platform: platMap && platMap[c.post] ? platMap[c.post] : "",
-        sched: c.sched, dep: dep, arr: c.schedArr + delay,
-        delay: delay, live: live, atStop: atStop, request: c.request,
-        inMin: dep - now.min,
-        leaveIn: dep - now.min - (walkMin || 0)
+    var best = {};            // spoj -> nejlepsi radek (kdyz jede pres vice zastavek v okoli)
+    origins.forEach(function (o, order) {
+      if (o.idx === toIdx) return;
+      var cands = candidates(o.idx, toIdx, now);
+      if (vehicles && vehicles.length) matchVehicles(cands, vehicles, now.min);
+      var platMap = D.plat[o.idx];
+      cands.forEach(function (c) {
+        var live = !!c.veh, delay = live ? c.veh.delay : 0;
+        if (live && c.vehPos > c.i) return;                      // vuz uz zastavku projel
+        if (!live && c.sched < now.min - CFG.KEEP_UNMATCHED_MIN) return;
+        var dep = c.sched + delay;
+        var atStop = live && c.vehPos === c.i;
+        if (atStop && dep < now.min) dep = now.min;
+        if (live && !atStop && dep < now.min - 1) dep = now.min; // zpozdeni mezitim naroslo
+        var r = D.routes[c.route];
+        var row = {
+          line: r[0], type: r[1], color: r[2], textColor: r[3],
+          headsign: c.headsign,
+          platform: platMap && platMap[c.post] ? platMap[c.post] : "",
+          stopIdx: o.idx, stopName: D.stops[o.idx][1], walk: o.walk || 0, order: order,
+          sched: c.sched, dep: dep, arr: toIdx >= 0 ? c.schedArr + delay : null,
+          delay: delay, live: live, atStop: atStop, request: c.request,
+          inMin: dep - now.min,
+          leaveIn: dep - now.min - (o.walk || 0)
+        };
+        var old = best[c.trip];
+        if (!old) { best[c.trip] = row; return; }
+        // prednost ma zastavka, kterou stihnu; mezi stihnutelnymi ta blizsi
+        var okNew = row.leaveIn >= -0.5, okOld = old.leaveIn >= -0.5;
+        if ((okNew && !okOld) || (okNew === okOld && row.walk < old.walk)) best[c.trip] = row;
       });
     });
-    rows.sort(function (a, b) { return a.dep - b.dep; });
+    var rows = Object.keys(best).map(function (k) { return best[k]; });
+    rows.sort(function (a, b) { return a.dep - b.dep || a.walk - b.walk; });
     return { now: now, rows: rows };
+  }
+
+  // ---- 2.8 Zastavky v okoli souradnic ----
+  function nearby(lat, lon) {
+    var kx = 111320 * Math.cos(lat * Math.PI / 180), ky = 110540, all = [];
+    for (var i = 0; i < D.stops.length; i++) {
+      var dx = (D.stops[i][4] - lon) * kx, dy = (D.stops[i][3] - lat) * ky;
+      var d = Math.sqrt(dx * dx + dy * dy);
+      if (d <= CFG.NEAR_FALLBACK_M) all.push([d, i]);
+    }
+    all.sort(function (a, b) { return a[0] - b[0]; });
+    var near = all.filter(function (x) { return x[0] <= CFG.NEAR_RADIUS_M; });
+    if (!near.length) near = all.slice(0, 3);
+    return near.slice(0, CFG.NEAR_MAX_STOPS).map(function (x) {
+      return {
+        idx: x[1], dist: Math.round(x[0]),
+        walk: Math.max(1, Math.ceil(x[0] * CFG.WALK_DETOUR / CFG.WALK_M_PER_MIN))
+      };
+    });
+  }
+
+  function reachableMulti(idxs) {
+    var set = {};
+    idxs.forEach(function (i) {
+      var r = reachable(i);
+      for (var k in r) set[k] = 1;
+    });
+    return set;
   }
 
   function fmtTime(min) {
@@ -226,7 +285,8 @@ var Core = (function () {
   }
 
   return {
-    load: load, search: search, reachable: reachable, departures: departures,
+    load: load, search: search, reachable: reachable, reachableMulti: reachableMulti,
+    nearby: nearby, departures: departures,
     fmtTime: fmtTime, pragueNow: pragueNow, normalize: normalize,
     data: function () { return D; },
     stop: function (i) { return D.stops[i]; },
@@ -299,8 +359,12 @@ var Live = (function () {
 (function () {
   if (typeof document === "undefined") return;
 
-  var S = { from: null, to: null, walk: 5, favs: [] };   // from/to = id uzlu
-  var fromIdx = -1, toIdx = -1, reach = null;
+  // S.from: cislo uzlu zastavky | {n: nazev adresy, la, lo} | null
+  // S.to:   cislo uzlu zastavky | null
+  var S = { from: null, to: null, walk: 5, favs: [] };
+  var origin = null;        // {type:"stop", idx} | {type:"place", name, lat, lon, stops:[{idx,dist,walk}]}
+  var toIdx = -1, reach = null;
+  var geoResults = [];
   var $ = function (id) { return document.getElementById(id); };
 
   // ---- 4.1 Ulozeni stavu ----
@@ -324,101 +388,191 @@ var Live = (function () {
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
     });
   }
-  function stopLabel(idx) {
-    var s = Core.stop(idx);
-    return s[1];
+  function isPlace(v) { return v && typeof v === "object"; }
+  function fromLabel(v) {
+    if (v == null) return "";
+    if (isPlace(v)) return v.n;
+    var i = Core.findById(v);
+    return i >= 0 ? Core.stop(i)[1] : "";
+  }
+  function toLabel(v) {
+    if (v == null) return "";
+    var i = Core.findById(v);
+    return i >= 0 ? Core.stop(i)[1] : "";
   }
 
-  // ---- 4.2 Vyber zastavky (naseptavac) ----
+  // ---- 4.2 Nastaveni trasy ----
+  function applyState() {
+    origin = null; toIdx = -1; reach = null;
+    if (isPlace(S.from)) {
+      var st = Core.nearby(S.from.la, S.from.lo);
+      origin = { type: "place", name: S.from.n, lat: S.from.la, lon: S.from.lo, stops: st };
+      reach = Core.reachableMulti(st.map(function (x) { return x.idx; }));
+    } else if (S.from != null) {
+      var fi = Core.findById(S.from);
+      if (fi >= 0) { origin = { type: "stop", idx: fi }; reach = Core.reachable(fi); }
+      else S.from = null;
+    }
+    if (S.to != null) {
+      toIdx = Core.findById(S.to);
+      if (toIdx < 0 || (reach && !reach[toIdx])) { toIdx = -1; S.to = null; }
+    }
+    save(); syncInputs(); render();
+  }
+  function setRoute(from, to, walk) {
+    S.from = from; S.to = to;
+    if (typeof walk === "number") S.walk = walk;
+    applyState();
+  }
+
+  function syncInputs() {
+    if (document.activeElement !== $("inFrom")) $("inFrom").value = fromLabel(S.from);
+    if (document.activeElement !== $("inTo")) $("inTo").value = toLabel(S.to);
+    $("walkVal").textContent = S.walk;
+    var place = origin && origin.type === "place";
+    $("walkBox").hidden = !!place;
+    $("walkAuto").hidden = !place;
+  }
+
+  // ---- 4.3 Hledani ulice / adresy (OpenStreetMap Nominatim) ----
+  function geocode(q) {
+    var url = CFG.GEOCODE_URL + "?format=jsonv2&addressdetails=1&limit=6&countrycodes=cz" +
+      "&bounded=1&viewbox=" + encodeURIComponent(CFG.GEOCODE_BOX) +
+      "&accept-language=cs&q=" + encodeURIComponent(q);
+    return fetch(url).then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    }).then(function (list) {
+      var seen = {};
+      return list.map(function (x) {
+        var a = x.address || {};
+        var street = a.road || a.pedestrian || a.square || a.footway || x.name || "";
+        var head = street ? street + (a.house_number ? " " + a.house_number : "") : (x.name || "");
+        var town = a.city || a.town || a.village || a.municipality || "";
+        var part = a.suburb || a.city_district || a.quarter || "";
+        var sub = [part, town].filter(function (v, i, arr) { return v && arr.indexOf(v) === i; }).join(", ");
+        return { name: head || String(x.display_name).split(",")[0], sub: sub, lat: +x.lat, lon: +x.lon };
+      }).filter(function (g) {
+        var k = g.name + "|" + g.sub;
+        if (!g.name || isNaN(g.lat) || isNaN(g.lon) || seen[k]) return false;
+        seen[k] = 1;
+        return true;
+      });
+    });
+  }
+
+  // ---- 4.4 Naseptavac ----
   function setupPicker(inputId, listId, which) {
     var inp = $(inputId), box = $(listId);
     function close() { box.hidden = true; box.innerHTML = ""; }
     function show() {
-      var only = (which === "to" && fromIdx >= 0) ? reach : null;
-      var res = Core.search(inp.value, 8, only);
-      if (!inp.value.trim()) { close(); return; }
-      if (!res.length) {
-        box.innerHTML = '<div class="sug none">' +
-          (only ? "Žádná zastávka s přímým spojem" : "Zastávka nenalezena") + "</div>";
-        box.hidden = false;
-        return;
-      }
-      box.innerHTML = res.map(function (i) {
+      var q = inp.value.trim();
+      if (!q) { close(); return; }
+      var only = (which === "to" && origin) ? reach : null;
+      var res = Core.search(q, which === "from" ? 6 : 8, only);
+      var html = res.map(function (i) {
         var s = Core.stop(i);
         return '<button type="button" class="sug" data-i="' + i + '">' + esc(s[1]) +
           '<span class="zone">zóna ' + esc(s[2]) + "</span></button>";
       }).join("");
+      if (which === "from" && q.length >= 3) {
+        html += '<button type="button" class="sug street" data-geo="1">Hledat ulici „' + esc(q) +
+          '“<span class="zone">odjezdy v okolí</span></button>';
+      }
+      if (!html) {
+        html = '<div class="sug none">' +
+          (only ? "Žádná zastávka s přímým spojem" : "Zastávka nenalezena") + "</div>";
+      }
+      box.innerHTML = html;
       box.hidden = false;
+    }
+    function runGeocode() {
+      var q = inp.value.trim();
+      if (q.length < 3) return;
+      box.innerHTML = '<div class="sug none">Hledám adresu…</div>';
+      box.hidden = false;
+      geocode(q).then(function (list) {
+        geoResults = list;
+        if (!list.length) {
+          box.innerHTML = '<div class="sug none">Ulice nenalezena. Zkuste přidat obec, např. „' +
+            esc(q) + ' Brno“.</div>';
+          return;
+        }
+        box.innerHTML = list.map(function (g, i) {
+          return '<button type="button" class="sug" data-g="' + i + '">' + esc(g.name) +
+            '<span class="zone">' + esc(g.sub) + "</span></button>";
+        }).join("");
+      }).catch(function () {
+        box.innerHTML = '<div class="sug none">Hledání adres teď není dostupné. Zkuste to za chvíli, nebo zadejte zastávku.</div>';
+      });
     }
     inp.addEventListener("input", show);
     inp.addEventListener("focus", function () { inp.select(); show(); });
-    inp.addEventListener("blur", function () {
-      setTimeout(function () { close(); syncInputs(); }, 200);
+    inp.addEventListener("keydown", function (ev) {
+      if (ev.key !== "Enter") return;
+      ev.preventDefault();
+      var first = box.querySelector(".sug[data-i], .sug[data-g]");
+      if (first) pick(first);
+      else if (which === "from") runGeocode();
     });
+    inp.addEventListener("blur", function () {
+      setTimeout(function () {
+        close();
+        if (!inp.value.trim()) {                 // vymazane pole = zrusit vyber
+          if (which === "from" && S.from != null) setRoute(null, S.to);
+          else if (which === "to" && S.to != null) setRoute(S.from, null);
+        }
+        syncInputs();
+      }, 200);
+    });
+    function pick(b) {
+      if (b.hasAttribute("data-geo")) { runGeocode(); return; }
+      if (b.hasAttribute("data-g")) {
+        var g = geoResults[+b.getAttribute("data-g")];
+        if (!g) return;
+        var label = g.name + (g.sub ? ", " + g.sub : "");
+        close(); inp.blur();
+        setRoute({ n: label, la: g.lat, lo: g.lon }, S.to);
+        return;
+      }
+      var idx = +b.getAttribute("data-i");
+      close(); inp.blur();
+      if (which === "from") setRoute(Core.stop(idx)[0], S.to);
+      else setRoute(S.from, Core.stop(idx)[0]);
+    }
     box.addEventListener("pointerdown", function (ev) {
-      var b = ev.target.closest(".sug[data-i]");
+      var b = ev.target.closest("button.sug");
       if (!b) return;
       ev.preventDefault();
-      choose(which, +b.getAttribute("data-i"));
-      close();
-      inp.blur();
+      pick(b);
     });
   }
 
-  function choose(which, idx) {
-    if (which === "from") {
-      fromIdx = idx; S.from = Core.stop(idx)[0];
-      reach = Core.reachable(idx);
-      if (toIdx >= 0 && !reach[toIdx]) { toIdx = -1; S.to = null; }
-    } else {
-      toIdx = idx; S.to = Core.stop(idx)[0];
-    }
-    save(); syncInputs(); render();
-    if (which === "from" && toIdx < 0) $("inTo").focus();
-  }
-
-  function syncInputs() {
-    if (document.activeElement !== $("inFrom")) $("inFrom").value = fromIdx >= 0 ? stopLabel(fromIdx) : "";
-    if (document.activeElement !== $("inTo")) $("inTo").value = toIdx >= 0 ? stopLabel(toIdx) : "";
-    $("walkVal").textContent = S.walk;
-  }
-
-  function setPair(fromId, toId, walk) {
-    fromIdx = fromId != null ? Core.findById(fromId) : -1;
-    toIdx = toId != null ? Core.findById(toId) : -1;
-    S.from = fromIdx >= 0 ? fromId : null;
-    S.to = toIdx >= 0 ? toId : null;
-    if (typeof walk === "number") S.walk = walk;
-    reach = fromIdx >= 0 ? Core.reachable(fromIdx) : null;
-    save(); syncInputs(); render();
-  }
-
-  // ---- 4.3 Oblibene dvojice ----
+  // ---- 4.5 Oblibene trasy ----
+  function favKey(f) { return JSON.stringify([f.from, f.to]); }
   function favIndex() {
-    for (var i = 0; i < S.favs.length; i++) {
-      if (S.favs[i].from === S.from && S.favs[i].to === S.to) return i;
-    }
+    var k = favKey(S);
+    for (var i = 0; i < S.favs.length; i++) if (favKey(S.favs[i]) === k) return i;
     return -1;
   }
   function renderFavs() {
-    var el = $("favs");
+    var el = $("favs"), cur = favKey(S);
     var html = S.favs.map(function (f, i) {
-      var a = Core.findById(f.from), b = Core.findById(f.to);
-      if (a < 0 || b < 0) return "";
-      var act = (f.from === S.from && f.to === S.to) ? " active" : "";
+      var a = fromLabel(f.from), b = toLabel(f.to);
+      if (!a) return "";
+      var act = favKey(f) === cur ? " active" : "";
       return '<button type="button" class="chip' + act + '" data-f="' + i + '">' +
-        esc(stopLabel(a)) + " → " + esc(stopLabel(b)) + "</button>";
+        esc(a.split(",")[0]) + (b ? " → " + esc(b) : " · okolí") + "</button>";
     }).join("");
     el.innerHTML = html;
     el.hidden = !html;
-    var star = $("btnFav");
-    var has = favIndex() >= 0;
-    star.disabled = !(fromIdx >= 0 && toIdx >= 0);
+    var star = $("btnFav"), has = favIndex() >= 0;
+    star.disabled = !origin;
     star.textContent = has ? "★ Uloženo" : "☆ Uložit trasu";
     star.setAttribute("aria-pressed", has ? "true" : "false");
   }
 
-  // ---- 4.4 Vykresleni odjezdu ----
+  // ---- 4.6 Vykresleni odjezdu ----
   function minutesText(m) {
     if (m < 0.5) return "teď";
     var r = Math.floor(m + 0.25);
@@ -426,22 +580,42 @@ var Live = (function () {
     if (r >= 60) return Math.floor(r / 60) + " h " + (r % 60) + " min";
     return r + " min";
   }
+  function isLight(hex) {
+    if (!hex || hex.length !== 6) return false;
+    var r = parseInt(hex.slice(0, 2), 16), g = parseInt(hex.slice(2, 4), 16), b = parseInt(hex.slice(4, 6), 16);
+    return (r * 299 + g * 587 + b * 114) / 1000 > 150;
+  }
 
   function render() {
     renderFavs();
-    var list = $("list"), info = $("info");
-    if (fromIdx < 0 || toIdx < 0) {
+    var list = $("list"), info = $("info"), near = $("near");
+    near.hidden = true;
+    if (!origin) {
       list.innerHTML = "";
-      info.textContent = fromIdx < 0 ? "Zadejte zastávku, odkud jedete." : "Zadejte cílovou zastávku.";
+      info.textContent = "Zadejte zastávku nebo ulici, odkud jedete.";
       info.hidden = false;
       renderStatus();
       return;
     }
-    var res = Core.departures(fromIdx, toIdx, new Date(), Live.list(), S.walk);
-    var rows = res.rows.slice(0, CFG.MAX_ROWS);
+    var place = origin.type === "place";
+    var origins = place ? origin.stops : [{ idx: origin.idx, walk: S.walk }];
+    if (place) {
+      near.hidden = false;
+      near.textContent = origins.length
+        ? "Zastávky v okolí: " + origins.map(function (o) {
+          return Core.stop(o.idx)[1] + " (" + o.walk + " min)";
+        }).join(", ")
+        : "V okolí 1,5 km není žádná zastávka IDS JMK.";
+    }
+    var res = Core.departures(origins, toIdx, new Date(), Live.list());
+    var rows = res.rows;
+    if (place) rows = rows.filter(function (r) { return r.leaveIn >= -0.5; });  // z adresy jen to, co se da stihnout
+    rows = rows.slice(0, CFG.MAX_ROWS);
     if (!rows.length) {
       list.innerHTML = "";
-      info.textContent = "V příštích " + (CFG.HORIZON_MIN / 60) + " hodinách odtud do cíle nejede žádný přímý spoj.";
+      info.textContent = toIdx >= 0
+        ? "V příštích " + (CFG.HORIZON_MIN / 60) + " hodinách odtud do cíle nejede žádný přímý spoj."
+        : "V nejbližší době odtud nic nejede.";
       info.hidden = false;
       renderStatus();
       return;
@@ -450,7 +624,6 @@ var Live = (function () {
     var firstOk = true;
     list.innerHTML = rows.map(function (r) {
       var miss = r.leaveIn < -0.5;
-      var cls = "row" + (miss ? " miss" : "");
       var bg = r.color ? "#" + r.color : "#555";
       var fg = r.textColor ? "#" + r.textColor : (isLight(r.color) ? "#000" : "#fff");
       var leave;
@@ -463,10 +636,11 @@ var Live = (function () {
       var timeTxt = Core.fmtTime(r.sched) +
         (r.live ? (d > 0 ? ' <span class="late">+' + d + "</span>" : (d < 0 ? ' <span class="early">' + d + "</span>" : ' <span class="ontime">včas</span>')) : "");
       var meta = [];
+      if (place) meta.push("<b>" + esc(r.stopName) + "</b> " + r.walk + " min pěšky");
       if (r.platform) meta.push("nást. " + esc(r.platform));
-      meta.push("v cíli " + Core.fmtTime(r.arr));
+      if (r.arr != null) meta.push("v cíli " + Core.fmtTime(r.arr));
       if (r.request) meta.push("na znamení");
-      return '<li class="' + cls + (hot ? " hot" : "") + '">' +
+      return '<li class="row' + (miss ? " miss" : "") + (hot ? " hot" : "") + '">' +
         '<span class="badge" style="background:' + bg + ";color:" + fg + '">' + esc(r.line) + "</span>" +
         '<span class="mid"><span class="head">' + esc(r.headsign) + "</span>" +
         '<span class="meta">' + meta.join(" · ") + "</span></span>" +
@@ -476,12 +650,6 @@ var Live = (function () {
         '<span class="leave">' + leave + "</span></span></li>";
     }).join("");
     renderStatus();
-  }
-
-  function isLight(hex) {
-    if (!hex || hex.length !== 6) return false;
-    var r = parseInt(hex.slice(0, 2), 16), g = parseInt(hex.slice(2, 4), 16), b = parseInt(hex.slice(4, 6), 16);
-    return (r * 299 + g * 587 + b * 114) / 1000 > 150;
   }
 
   function renderStatus() {
@@ -495,20 +663,20 @@ var Live = (function () {
     $("stale").hidden = !(age > 10);
   }
 
-  // ---- 4.5 Start ----
+  // ---- 4.7 Start ----
   function init() {
     restore();
     setupPicker("inFrom", "sugFrom", "from");
     setupPicker("inTo", "sugTo", "to");
 
     $("btnSwap").addEventListener("click", function () {
-      if (fromIdx < 0 && toIdx < 0) return;
-      setPair(S.to, S.from);
+      if (isPlace(S.from) || S.to == null) return;   // prohodit jde jen zastavka <-> zastavka
+      setRoute(S.to, S.from);
     });
     $("walkMinus").addEventListener("click", function () { S.walk = Math.max(0, S.walk - 1); save(); syncInputs(); render(); });
     $("walkPlus").addEventListener("click", function () { S.walk = Math.min(60, S.walk + 1); save(); syncInputs(); render(); });
     $("btnFav").addEventListener("click", function () {
-      if (fromIdx < 0 || toIdx < 0) return;
+      if (!origin) return;
       var i = favIndex();
       if (i >= 0) S.favs.splice(i, 1);
       else S.favs.push({ from: S.from, to: S.to, walk: S.walk });
@@ -518,7 +686,7 @@ var Live = (function () {
       var b = ev.target.closest(".chip");
       if (!b) return;
       var f = S.favs[+b.getAttribute("data-f")];
-      if (f) setPair(f.from, f.to, f.walk);
+      if (f) setRoute(f.from, f.to, f.walk);
     });
 
     $("info").textContent = "Načítám jízdní řád…";
@@ -526,7 +694,7 @@ var Live = (function () {
       .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
       .then(function (data) {
         Core.load(data);
-        setPair(S.from, S.to);
+        applyState();
         Live.start();
         setInterval(function () { if (!document.hidden) render(); }, CFG.RENDER_MS);
         document.addEventListener("visibilitychange", function () {
