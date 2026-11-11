@@ -7,7 +7,7 @@
 // ============================================================
 // 1. NASTAVENI
 // ============================================================
-var CACHE = "odjezdy-v1";
+var CACHE = "odjezdy-v6";
 var SHELL = ["./", "index.html", "app.js", "data.json", "manifest.json", "icon.svg", "icon-192.png"];
 var TIMEOUT_MS = 6000;
 
@@ -41,7 +41,9 @@ self.addEventListener("fetch", function (ev) {
         if (hit && !done) { done = true; resolve(hit); }
       });
     }, TIMEOUT_MS);
-    fetch(req).then(function (res) {
+    // "no-cache" = vzdy overit u serveru, jinak prohlizec az 10 minut vraci starou verzi
+    var net = req.mode === "navigate" ? fetch(req) : fetch(req, { cache: "no-cache" });
+    net.then(function (res) {
       clearTimeout(timer);
       if (res && res.ok) {
         var copy = res.clone();

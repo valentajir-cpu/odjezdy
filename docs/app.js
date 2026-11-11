@@ -9,6 +9,7 @@
 // 1. NASTAVENI
 // ============================================================
 var CFG = {
+  VERSION: "6",            // pri kazde zmene zvysit zde i v index.html (app.js?v=) a v sw.js (CACHE)
   DATA_URL: "data.json",
   WS_URL: "wss://gis.brno.cz/geoevent/ws/services/Kordis_stream/StreamServer/subscribe",
   HORIZON_MIN: 180,        // jak daleko dopredu hledat odjezdy do cile
@@ -890,7 +891,7 @@ var Live = (function () {
     else live = "živá data nedostupná – časy podle jízdního řádu";
     var gen = D ? D.gen.slice(8, 10) + "." + D.gen.slice(5, 7) + "." : "?";
     $("status").innerHTML = '<span class="dot ' + (st.ok && !planAt ? "live" : "plan") + '"></span>' + live +
-      " · jízdní řád z " + gen;
+      " · jízdní řád z " + gen + " · verze " + CFG.VERSION;
     var age = D ? (Date.now() - Date.parse(D.gen)) / 86400000 : 0;
     $("stale").hidden = !(age > 10);
   }
