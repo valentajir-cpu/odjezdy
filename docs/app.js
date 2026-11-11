@@ -431,7 +431,7 @@ var Live = (function () {
   // S.to:   pole cisel uzlu cilovych zastavek (prazdne = vsechny smery)
   // S.favs: [{name, from, to, walk, use: {"d7": 3, ...}}]
   // S.hide: {klic vychoziho mista: [skryte linky]}
-  var S = { from: null, to: [], walk: 5, favs: [], hide: {}, speed: 75, radius: 500, smart: true };
+  var S = { from: null, to: [], walk: 5, favs: [], hide: {}, speed: 75, radius: 500, smart: true, hideMiss: false };
   var origin = null;        // {type:"stop", idx} | {type:"place", name, lat, lon, stops:[...]}
   var toIdxs = [], reach = null;
   var geoResults = [];
@@ -459,6 +459,7 @@ var Live = (function () {
       S.speed = typeof o.speed === "number" ? o.speed : 75;
       S.radius = typeof o.radius === "number" ? o.radius : 500;
       S.smart = o.smart !== false;
+      S.hideMiss = o.hideMiss === true;
       S.favs = (Array.isArray(o.favs) ? o.favs : []).map(function (f) {
         return {
           name: typeof f.name === "string" ? f.name : "", from: f.from, to: normTo(f.to),
@@ -526,6 +527,8 @@ var Live = (function () {
     $("walkVal").textContent = S.walk;
     var place = origin && origin.type === "place";
     $("walkBox").hidden = !!place;
+    $("missBox").hidden = !!place;
+    $("setHideMiss").checked = S.hideMiss;
     $("btnSwap").hidden = !(origin && origin.type === "stop" && S.to.length === 1);
     $("btnNow").hidden = !planAt;
     $("inTime").value = planAt;
@@ -793,7 +796,8 @@ var Live = (function () {
     var now = planAt ? Core.plannedNow(new Date(), planAt) : Core.pragueNow(new Date());
     var res = Core.departures(origins, toIdxs, now, Live.list());
     var all = res.rows;
-    if (place) all = all.filter(function (r) { return r.leaveIn >= -0.5; });   // z adresy jen to, co se da stihnout
+    // z adresy vzdy jen to, co se da stihnout; u zastavky podle volby "skryt nestihnutelne"
+    if (place || S.hideMiss) all = all.filter(function (r) { return r.leaveIn >= -0.5; });
 
     // filtr linek
     var hidden = S.hide[originKey()] || [];
@@ -910,6 +914,8 @@ var Live = (function () {
     });
     $("walkMinus").addEventListener("click", function () { S.walk = Math.max(0, S.walk - 1); save(); syncInputs(); render(); });
     $("walkPlus").addEventListener("click", function () { S.walk = Math.min(60, S.walk + 1); save(); syncInputs(); render(); });
+
+    $("setHideMiss").addEventListener("change", function () { S.hideMiss = $("setHideMiss").checked; save(); render(); });
 
     // odjezd pozdeji
     $("inTime").addEventListener("change", function () { planAt = $("inTime").value || ""; openKey = ""; syncInputs(); render(); });

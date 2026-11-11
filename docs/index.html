@@ -82,6 +82,7 @@ button { cursor: pointer; }
 .opt { display: flex; align-items: center; gap: 8px; font-size: 14px; }
 .opt .step { width: 36px; height: 36px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line); font-size: 20px; line-height: 1; }
 .opt b { min-width: 52px; text-align: center; font-variant-numeric: tabular-nums; }
+.opt input[type=checkbox] { width: 20px; height: 20px; margin: 0; accent-color: var(--accent); }
 .opt input[type=time] { padding: 6px 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; font-size: 15px; }
 .actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
 #favEdit { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
@@ -180,6 +181,10 @@ footer a { color: inherit; }
         <b><span id="walkVal">5</span> min</b>
         <button id="walkPlus" class="step" type="button" aria-label="Více minut">+</button>
       </div>
+      <label class="opt" id="missBox">
+        <input id="setHideMiss" type="checkbox">
+        <span>Skrýt spoje, které nestihnu</span>
+      </label>
       <div class="opt">
         <label for="inTime">Odjezd v</label>
         <input id="inTime" type="time">
