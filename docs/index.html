@@ -150,10 +150,67 @@ details.settings summary { cursor: pointer; font-weight: 600; }
 .set select { padding: 6px 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; }
 footer { margin: 18px 4px 0; color: var(--muted); font-size: 12px; }
 footer a { color: inherit; }
+/* ===== 8. ZALOZKY ===== */
+.tabs { display: flex; gap: 4px; margin-bottom: 10px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 4px; }
+.tab { flex: 1; padding: 9px; border: 0; border-radius: 9px; background: none; font-weight: 700; color: var(--muted); }
+.tab.on { background: var(--accent); color: #fff; }
+
+/* ===== 9. PLAN CESTY - ZADANI ===== */
+.pstep { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; margin-bottom: 8px; }
+.phead { display: flex; justify-content: space-between; align-items: center; font-size: 12px; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
+.pdel { border: 0; background: none; color: var(--muted); font-size: 18px; padding: 0 4px; }
+.prow { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 10px; font-size: 14px; align-items: center; }
+.prow label { display: flex; align-items: center; gap: 6px; }
+.prow input[type=time], .prow input[type=date], .prow input[type=number], .prow select {
+  padding: 6px 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; font-size: 15px;
+}
+.prow input[type=number] { width: 72px; }
+.prow input[type=checkbox] { width: 20px; height: 20px; margin: 0; accent-color: var(--accent); }
+.padd { width: 100%; margin-bottom: 8px; padding: 10px; }
+.pactions { display: flex; gap: 8px; justify-content: space-between; margin-bottom: 4px; }
+
+/* ===== 10. PLAN CESTY - VYSLEDEK ===== */
+.psum { margin-top: 12px; padding: 14px; border-radius: 14px; background: var(--accent); color: #fff; }
+.psum.bad { background: var(--late); }
+@media (prefers-color-scheme: dark) { .psum { background: #114a85; } .psum.bad { background: #8a2620; } }
+.pinfo { margin: 10px 4px 0; color: var(--muted); font-size: 13px; }
+.perr { margin: 14px 4px; color: var(--late); font-weight: 600; }
+.tl { list-style: none; margin: 14px 0 0; padding: 0; }
+.tl li { display: flex; gap: 10px; }
+.tl .tt { flex: 0 0 46px; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; padding-top: 1px; }
+.tl .tc { flex: 1 1 auto; min-width: 0; border-left: 3px solid var(--accent); padding: 0 0 14px 14px; position: relative; }
+.tl .walk .tc { border-left: 3px dotted var(--line); color: var(--muted); font-size: 13px; padding-bottom: 10px; }
+.tl .walk .tt { font-weight: 400; }
+.tl .place .tc::before {
+  content: ""; position: absolute; left: -9px; top: 2px; width: 11px; height: 11px; border-radius: 50%;
+  background: var(--card); border: 3px solid var(--accent);
+}
+.tl .place b { font-size: 16px; }
+.tl .place.pend .tc { border-left-color: transparent; }
+.tl small { display: block; color: var(--muted); font-size: 13px; }
+.tl .ride .tc { font-size: 14px; }
+.rline { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.badge.sm { min-width: 34px; padding: 2px 5px; font-size: 14px; border-radius: 6px; }
+.warn { display: block; color: var(--late); font-weight: 600; font-size: 13px; }
+.okk { display: block; color: var(--ok); font-weight: 600; font-size: 13px; }
+.palts { margin-top: 6px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; }
+.palts h3 { margin: 0 0 6px; font-size: 14px; }
+.palts ul { list-style: none; margin: 0; padding: 0; }
+.palts li { padding: 6px 0; border-top: 1px solid var(--line); font-size: 14px; }
+.palts li:first-child { border-top: 0; }
+.palts .warn { display: inline; }
+.palts small { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; color: var(--muted); font-size: 13px; margin-top: 2px; }
+.muted { color: var(--muted); }
 </style>
 </head>
 <body>
 <main>
+  <nav class="tabs" role="tablist">
+    <button id="tabDep" class="tab on" type="button" role="tab" aria-selected="true">Odjezdy</button>
+    <button id="tabPlan" class="tab" type="button" role="tab" aria-selected="false">Plán cesty</button>
+  </nav>
+
+  <div id="viewDep">
   <div id="favs" class="favs" hidden></div>
 
   <section class="form" aria-label="Trasa">
@@ -210,6 +267,12 @@ footer a { color: inherit; }
 
   <p id="info"></p>
   <ul id="list"></ul>
+  </div>
+
+  <div id="viewPlan" hidden>
+    <section id="planForm" aria-label="Zadání plánu"></section>
+    <section id="planOut" aria-live="polite"></section>
+  </div>
 
   <p id="status"></p>
   <p id="stale" hidden>Jízdní řád je starší než deset dní – automatická aktualizace zřejmě neproběhla.</p>
@@ -246,6 +309,7 @@ footer a { color: inherit; }
     Živé časy jsou odhad, nejde o oficiální údaj IDS JMK.
   </footer>
 </main>
-<script src="app.js?v=6"></script>
+<script src="app.js?v=7"></script>
+<script src="plan.js?v=7"></script>
 </body>
 </html>

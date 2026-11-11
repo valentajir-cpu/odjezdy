@@ -9,7 +9,7 @@
 // 1. NASTAVENI
 // ============================================================
 var CFG = {
-  VERSION: "6",            // pri kazde zmene zvysit zde i v index.html (app.js?v=) a v sw.js (CACHE)
+  VERSION: "7",            // pri kazde zmene zvysit zde i v index.html (app.js?v=) a v sw.js (CACHE)
   DATA_URL: "data.json",
   WS_URL: "wss://gis.brno.cz/geoevent/ws/services/Kordis_stream/StreamServer/subscribe",
   HORIZON_MIN: 180,        // jak daleko dopredu hledat odjezdy do cile
@@ -985,6 +985,7 @@ var Live = (function () {
       .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
       .then(function (data) {
         Core.load(data);
+        try { document.dispatchEvent(new Event("odjezdy:data")); } catch (e) { }
         var auto = smartPick();
         if (auto && routeKey(auto.from, auto.to) !== routeKey(S.from, S.to)) useFav(auto, true);
         else {

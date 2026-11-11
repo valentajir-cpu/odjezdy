@@ -7,8 +7,8 @@
 // ============================================================
 // 1. NASTAVENI
 // ============================================================
-var CACHE = "odjezdy-v6";
-var SHELL = ["./", "index.html", "app.js", "data.json", "manifest.json", "icon.svg", "icon-192.png"];
+var CACHE = "odjezdy-v7";
+var SHELL = ["./", "index.html", "app.js", "plan.js", "data.json", "manifest.json", "icon.svg", "icon-192.png"];
 var TIMEOUT_MS = 6000;
 
 // ============================================================
