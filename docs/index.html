@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#14181d">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Odjezdy">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>Odjezdy MHD</title>
+<style>
+/* ===== 1. ZAKLAD ===== */
+:root {
+  --bg: #f3f4f6; --card: #ffffff; --ink: #14181d; --muted: #5d6673; --line: #dfe3e8;
+  --accent: #0b6bcb; --ok: #12824c; --late: #c22f2f; --hot: #e8f3ff;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1215; --card: #191e24; --ink: #eef1f4; --muted: #98a2ae; --line: #2a313a;
+    --accent: #5aa9f5; --ok: #45c486; --late: #ff7b72; --hot: #16283a;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--ink);
+  font: 16px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+main { max-width: 560px; margin: 0 auto; padding: 12px 12px 32px; }
+button { font: inherit; color: inherit; cursor: pointer; }
+
+/* ===== 2. FORMULAR ===== */
+.form { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px; position: relative; }
+.field { position: relative; }
+.field label { display: block; font-size: 12px; color: var(--muted); margin: 0 0 2px 2px; }
+.field input {
+  width: 100%; padding: 11px 48px 11px 12px; font: inherit; font-size: 17px; color: var(--ink);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 10px; outline: none;
+}
+.field input:focus { border-color: var(--accent); }
+.field + .field { margin-top: 8px; }
+#btnSwap {
+  position: absolute; right: 20px; top: 69px; z-index: 2; width: 40px; height: 40px; border-radius: 50%;
+  background: var(--card); border: 1px solid var(--line); font-size: 18px; line-height: 1;
+}
+.sugs {
+  position: absolute; left: 0; right: 0; top: 100%; z-index: 5; margin-top: 4px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+  box-shadow: 0 8px 24px rgba(0,0,0,.18);
+}
+.sug {
+  display: flex; justify-content: space-between; gap: 8px; width: 100%; text-align: left;
+  padding: 12px; background: none; border: 0; border-bottom: 1px solid var(--line); font-size: 16px;
+}
+.sug:last-child { border-bottom: 0; }
+.sug .zone { color: var(--muted); font-size: 13px; white-space: nowrap; }
+.sug.none { color: var(--muted); }
+
+.opts { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.walk { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.walk button { width: 36px; height: 36px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line); font-size: 20px; line-height: 1; }
+.walk b { min-width: 52px; text-align: center; font-variant-numeric: tabular-nums; }
+#btnFav { padding: 8px 12px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line); font-size: 14px; }
+#btnFav:disabled { opacity: .45; }
+
+.favs { display: flex; gap: 8px; overflow-x: auto; padding: 10px 2px 2px; }
+.chip { flex: 0 0 auto; padding: 8px 12px; border-radius: 999px; background: var(--card); border: 1px solid var(--line); font-size: 14px; white-space: nowrap; }
+.chip.active { border-color: var(--accent); color: var(--accent); }
+
+/* ===== 3. SEZNAM ODJEZDU ===== */
+#list { list-style: none; margin: 12px 0 0; padding: 0; }
+.row {
+  display: flex; align-items: center; gap: 10px; background: var(--card);
+  border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; margin-bottom: 8px;
+}
+.row.hot { background: var(--hot); border-color: var(--accent); }
+.row.miss { opacity: .5; }
+.badge {
+  flex: 0 0 auto; min-width: 46px; padding: 6px 6px; border-radius: 9px; text-align: center;
+  font-weight: 700; font-size: 18px; font-variant-numeric: tabular-nums;
+}
+.mid { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.head { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.meta { color: var(--muted); font-size: 13px; }
+.right { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; text-align: right; }
+.in { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.time { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.leave { font-size: 13px; font-weight: 600; color: var(--accent); }
+.row.miss .leave { color: var(--muted); font-weight: 400; }
+.late { color: var(--late); font-weight: 600; }
+.early, .ontime { color: var(--ok); }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; }
+.dot.live { background: var(--ok); }
+.dot.plan { background: transparent; border: 1.5px solid var(--muted); }
+
+/* ===== 4. STAV A PATICKA ===== */
+#info { margin: 18px 4px; color: var(--muted); text-align: center; }
+#status { margin: 14px 4px 0; color: var(--muted); font-size: 13px; }
+#stale { margin: 8px 4px 0; color: var(--late); font-size: 13px; }
+footer { margin: 18px 4px 0; color: var(--muted); font-size: 12px; }
+footer a { color: inherit; }
+</style>
+</head>
+<body>
+<main>
+  <section class="form" aria-label="Trasa">
+    <div class="field">
+      <label for="inFrom">Odkud</label>
+      <input id="inFrom" type="text" inputmode="search" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Výchozí zastávka">
+      <div id="sugFrom" class="sugs" hidden></div>
+    </div>
+    <button id="btnSwap" type="button" aria-label="Prohodit směr" title="Prohodit směr">⇅</button>
+    <div class="field">
+      <label for="inTo">Kam (jen přímé spoje)</label>
+      <input id="inTo" type="text" inputmode="search" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Cílová zastávka">
+      <div id="sugTo" class="sugs" hidden></div>
+    </div>
+    <div class="opts">
+      <div class="walk">
+        <span>Na zastávku dojdu za</span>
+        <button id="walkMinus" type="button" aria-label="Méně minut">−</button>
+        <b><span id="walkVal">5</span> min</b>
+        <button id="walkPlus" type="button" aria-label="Více minut">+</button>
+      </div>
+      <button id="btnFav" type="button" disabled>☆ Uložit trasu</button>
+    </div>
+  </section>
+
+  <div id="favs" class="favs" hidden></div>
+
+  <p id="info"></p>
+  <ul id="list" aria-live="polite"></ul>
+
+  <p id="status"></p>
+  <p id="stale" hidden>Jízdní řád je starší než týden – automatická aktualizace zřejmě neproběhla.</p>
+
+  <footer>
+    Plný kroužek = živý čas dopočítaný ze zpoždění vozu, prázdný = čas podle jízdního řádu.
+    Data: KORDIS JMK, a.s. a statutární město Brno (<a href="https://data.brno.cz" rel="noopener">data.brno.cz</a>), licence CC BY 4.0.
+    Živé časy jsou odhad, nejde o oficiální údaj IDS JMK.
+  </footer>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

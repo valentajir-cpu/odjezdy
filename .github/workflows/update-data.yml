@@ -1,0 +1,37 @@
+# Jednou denne stahne jizdni rad IDS JMK a prepocita docs/data.json.
+# Commit vznikne jen tehdy, kdyz se jizdni rad opravdu zmenil.
+name: Aktualizace jizdniho radu
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-data
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Prepocet dat
+        run: python scripts/build_data.py
+      - name: Commit zmen
+        run: |
+          if git diff --quiet -- docs/data.json; then
+            echo "Jizdni rad beze zmeny."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/data.json
+          git commit -m "data: aktualizace jizdniho radu"
+          git push
